@@ -690,7 +690,7 @@ function startDb(){
   function mark(k,fromCache){
     if(fromCache)return;
     got[k]=1;
-    if(got.c&&got.t&&got.s&&!loaded){loaded=true;clearTimeout(timer);$('#banner').innerHTML='';renderAll();autoBackup()}
+    if(got.c&&got.t&&got.s){clearTimeout(timer);$('#banner').innerHTML='';if(!loaded){loaded=true;renderAll();autoBackup()}}
   }
   function onErr(){clearTimeout(timer);loaded=true;$('#banner').innerHTML='<div class="banner">انقطع الاتصال بالتخزين. أعد فتح الصفحة لمتابعة الحفظ.</div>';renderAll()}
   db.collection('clients').onSnapshot(function(snap){
