@@ -505,7 +505,7 @@ body.hide-amt .stat b,body.hide-amt .stat em,body.hide-amt .tbl td.num,body.hide
     }
     var done=false;
     auth.onAuthStateChanged(function(u){
-      if(u){if(!done){done=true;hidePanel();resolveDb(wrapDb(fs))}}
+      if(u){var nm=String(u.displayName||'').trim().split(/\s+/)[0]||String(u.email||'').split('@')[0]||'';window.claude.user={name:nm,email:u.email||''};if(!done){done=true;hidePanel();resolveDb(wrapDb(fs))}}
       else if(!done){signin('')}
     });
   })
@@ -557,7 +557,7 @@ function normClient(d){
 function normTx(d){
   if(!d||typeof d.cid!=='string')return null;
   var a=Math.round(Number(d.amount));if(!isFinite(a)||a<=0)return null;
-  return {cid:d.cid,type:d.type==='payment'?'payment':'debt',amount:a,date:validDate(d.date)?d.date:today(),due:validDate(d.due)?d.due:'',note:String(d.note||''),createdAt:Number(d.createdAt)||0};
+  return {cid:d.cid,type:d.type==='payment'?'payment':'debt',amount:a,date:validDate(d.date)?d.date:today(),due:validDate(d.due)?d.due:'',note:String(d.note||''),by:String(d.by||''),createdAt:Number(d.createdAt)||0};
 }
 function normSettings(d){
   var o=Object.assign({pinHash:'',pinSalt:''},DEFAULTS);
@@ -654,7 +654,9 @@ function writeDoc(path,del,data){
   }).then(function(){pending--;if(!pending){setSync('saved')}});
 }
 function putClient(id,d){return writeDoc('clients/'+id,false,d)}
-function putTx(id,d){return writeDoc('txs/'+id,false,d)}
+function me(){var u=window.claude&&window.claude.user;return u&&u.name?String(u.name):''}
+function byName(x){return x&&x.by?x.by:''}
+function putTx(id,d){if(d.by===undefined)d.by=me();return writeDoc('txs/'+id,false,d)}
 function dropTx(id){return writeDoc('txs/'+id,true)}
 function dropClientDoc(id){return writeDoc('clients/'+id,true)}
 function putSettings(){
@@ -948,10 +950,25 @@ function openAdd(){
     '</form>');
   var f=o.m.querySelector('#fAdd');
   f.date.addEventListener('change',function(){if(f.date.value)f.due.value=addDays(f.date.value,S().termDays)});
+  function sameName(v){
+    var q=nz(v).replace(/\s+/g,' ').trim();if(!q)return null;
+    var k=ui.tab==='suppliers'?'supplier':'customer';
+    return state.clients.filter(function(c){return c.kind===k&&nz(c.name).replace(/\s+/g,' ').trim()===q})[0]||null;
+  }
+  var dupOk=false,dupHint=document.createElement('div');
+  dupHint.className='err';dupHint.setAttribute('role','alert');dupHint.style.cssText='background:#fff4d6;color:#8a5a00;border-radius:10px;padding:8px 12px;margin-top:6px';dupHint.hidden=true;
+  f.name.parentNode.appendChild(dupHint);
+  f.name.addEventListener('input',function(){
+    dupOk=false;var d=sameName(f.name.value);
+    if(d){var k=calc(d);dupHint.textContent='⚠️ يوجد '+(ui.tab==='suppliers'?'مورد':'عميل')+' بنفس الاسم: '+d.name+' (المتبقي '+fm(Math.max(0,k.rem),d.cur)+')';dupHint.hidden=false}
+    else dupHint.hidden=true;
+  });
   f.addEventListener('submit',function(e){
     e.preventDefault();
     var name=f.name.value.trim(),amt=parseAmt(f.amount.value),err=o.m.querySelector('#eAdd');
     if(!name){err.textContent='اكتب اسم العميل.';return}
+    var dup=sameName(name);
+    if(dup&&!dupOk){dupOk=true;err.textContent='⚠️ يوجد '+(ui.tab==='suppliers'?'مورد':'عميل')+' بنفس الاسم ('+dup.name+'). إن كان شخصاً آخر اضغط «حفظ العميل» مرة ثانية، أو غيّر الاسم (مثلاً أضف اسم الأب).';return}
     if(f.amount.value.trim()&&!(amt>0)){err.textContent='مبلغ الدين يجب أن يكون رقماً أكبر من صفر.';return}
     var id=uid(),now=Date.now();
     putClient(id,{no:nextNo(),name:name,phone:f.phone.value.trim(),cur:f.cur.value,note:f.note.value.trim(),kind:ui.tab==='suppliers'?'supplier':'customer',createdAt:now});
@@ -992,8 +1009,8 @@ function paintClient(){
       '<div class="err" id="eTx" role="alert"></div>'+
       '<div class="foot"><button class="btn solid" type="submit">'+(ed?'حفظ التعديل':'حفظ الحركة')+'</button>'+(ed?'<button class="btn" type="button" data-canceledit>إلغاء التعديل</button>':'')+'</div></form>'+
     '<div class="sec"><h4>سجل الحركات ('+txs.length+')</h4>'+
-      (txs.length?'<div class="mtbl-wrap"><table class="mtbl"><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>الاستحقاق</th><th>ملاحظة</th><th></th></tr></thead><tbody>'+
-        txs.map(function(x){var p=x.type==='payment';return '<tr><td>'+dtCell(x)+'</td><td class="'+(p?'t-pay':'t-debt')+'">'+(p?'دفعة':'دين')+'</td><td class="m '+(p?'t-pay':'t-debt')+'">'+fm(x.amount,c.cur)+'</td><td>'+(p?'—':showD(x.due||addDays(x.date,S().termDays)))+'</td><td>'+esc(x.note)+'</td><td style="white-space:nowrap"><button class="btn" type="button" data-edittx="'+x.id+'" style="padding:2px 10px">تعديل</button> <button class="btn danger" type="button" data-deltx="'+x.id+'" style="padding:2px 10px">حذف</button></td></tr>'}).join('')+
+      (txs.length?'<div class="mtbl-wrap"><table class="mtbl"><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>الاستحقاق</th><th>بواسطة</th><th>ملاحظة</th><th></th></tr></thead><tbody>'+
+        txs.map(function(x){var p=x.type==='payment';return '<tr><td>'+dtCell(x)+'</td><td class="'+(p?'t-pay':'t-debt')+'">'+(p?'دفعة':'دين')+'</td><td class="m '+(p?'t-pay':'t-debt')+'">'+fm(x.amount,c.cur)+'</td><td>'+(p?'—':showD(x.due||addDays(x.date,S().termDays)))+'</td><td>'+esc(byName(x)||'—')+'</td><td>'+esc(x.note)+'</td><td style="white-space:nowrap"><button class="btn" type="button" data-edittx="'+x.id+'" style="padding:2px 10px">تعديل</button> <button class="btn danger" type="button" data-deltx="'+x.id+'" style="padding:2px 10px">حذف</button></td></tr>'}).join('')+
       '</tbody></table></div>':'<div class="msgbox">لا توجد حركات مسجلة لهذا العميل.</div>')+
     '</div>'+
     '<details class="edit"><summary>تعديل بيانات العميل</summary><form id="fEdit" class="sec" novalidate>'+
@@ -1017,6 +1034,7 @@ function paintClient(){
     if(type==='payment'&&pd+amt>tot){err.textContent='المبلغ أكبر من المتبقي ('+fm(Math.max(0,tot-pd),c.cur)+').';return}
     if(type==='debt'&&tot+amt<pd){err.textContent='الدين الجديد أقل من المبالغ المستلمة ('+fm(pd,c.cur)+').';return}
     var d={cid:c.id,type:type,amount:amt,date:f.date.value||today(),due:type==='debt'?(f.due.value||''):'',note:f.note.value.trim(),createdAt:ed?ed.createdAt:Date.now()};
+    if(ed)d.by=ed.by||'';
     putTx(ed?ed.id:uid(),d);
     var was=!!ed;cm.edit=null;afterChange();paintClient();
     toast(was?'تم حفظ التعديل':type==='payment'?'تم تسجيل الدفعة':'تمت إضافة الدين');
@@ -1158,8 +1176,8 @@ function openTxs(){
     var sm={IQD:[0,0],USD:[0,0]};list.forEach(function(r){sm[r.c.cur][r.x.type==='payment'?0:1]+=r.x.amount});
     function line(i){return money(sm.IQD[i])+(sm.USD[i]?' + $'+money(sm.USD[i]):'')}
     o.m.querySelector('#txBody').innerHTML=list.length?
-      '<div class="mtbl-wrap"><table class="mtbl"><thead><tr><th>التاريخ</th><th>العميل</th><th>النوع</th><th>المبلغ</th><th>ملاحظة</th></tr></thead><tbody>'+
-      list.map(function(r){var p=r.x.type==='payment';return '<tr><td>'+dtCell(r.x)+'</td><td>'+esc(r.c.name)+'</td><td class="'+(p?'t-pay':'t-debt')+'">'+(p?'دفعة':'دين')+'</td><td class="m '+(p?'t-pay':'t-debt')+'">'+fm(r.x.amount,r.c.cur)+'</td><td>'+esc(r.x.note)+'</td></tr>'}).join('')+
+      '<div class="mtbl-wrap"><table class="mtbl"><thead><tr><th>التاريخ</th><th>العميل</th><th>النوع</th><th>المبلغ</th><th>بواسطة</th><th>ملاحظة</th></tr></thead><tbody>'+
+      list.map(function(r){var p=r.x.type==='payment';return '<tr><td>'+dtCell(r.x)+'</td><td>'+esc(r.c.name)+'</td><td class="'+(p?'t-pay':'t-debt')+'">'+(p?'دفعة':'دين')+'</td><td class="m '+(p?'t-pay':'t-debt')+'">'+fm(r.x.amount,r.c.cur)+'</td><td>'+esc(byName(r.x)||'—')+'</td><td>'+esc(r.x.note)+'</td></tr>'}).join('')+
       '</tbody></table></div><div class="msgbox" style="margin-top:10px">'+list.length+' حركة · دفعات '+line(0)+' · ديون '+line(1)+'</div>':
       '<div class="msgbox">لا توجد حركات مطابقة.</div>';
   }
@@ -1173,8 +1191,8 @@ function openTxs(){
     buildReport({
       title:'نظام الديون — الحركات المالية',
       stats:[['عدد الحركات',String(shown.length),'#13283b'],['إجمالي المستلم',line(0),'#1d7a4b'],['إجمالي الديون',line(1),'#a3352b']],
-      cols:[{w:270,h:'التاريخ والوقت',a:'r'},{w:260,h:'الاسم',a:'r'},{w:170,h:'النوع',a:'c'},{w:200,h:'المبلغ',a:'c'},{w:220,h:'ملاحظة',a:'r'}],
-      rows:shown.map(function(r){var p=r.x.type==='payment';return {tint:p?'#edf8f2':'#ffffff',cells:[dtText(r.x),r.c.name,p?'استلام/تسديد':'دين',fm(r.x.amount,r.c.cur),r.x.note||''],colors:['#64788a','#13283b',p?'#1d7a4b':'#a3352b',p?'#1d7a4b':'#a3352b','#64788a']}}),
+      cols:[{w:250,h:'التاريخ والوقت',a:'r'},{w:230,h:'الاسم',a:'r'},{w:150,h:'النوع',a:'c'},{w:190,h:'المبلغ',a:'c'},{w:140,h:'بواسطة',a:'r'},{w:160,h:'ملاحظة',a:'r'}],
+      rows:shown.map(function(r){var p=r.x.type==='payment';return {tint:p?'#edf8f2':'#ffffff',cells:[dtText(r.x),r.c.name,p?'استلام/تسديد':'دين',fm(r.x.amount,r.c.cur),byName(r.x),r.x.note||''],colors:['#64788a','#13283b',p?'#1d7a4b':'#a3352b',p?'#1d7a4b':'#a3352b','#13283b','#64788a']}}),
       total:null
     }).then(function(blob){saveFile('transactions-'+today()+'.pdf',blob,'الحركات')}).catch(function(){toast('تعذر إنشاء الملف')});
   });
@@ -1286,7 +1304,7 @@ function openSettings(){
 function snapshotData(){
   return {
     clients:state.clients.concat(state.trash).map(function(c){return {id:c.id,no:c.no,name:c.name,phone:c.phone,cur:c.cur,note:c.note,kind:c.kind,del:c.del||0,createdAt:c.createdAt,
-      txs:c.txs.map(function(x){return {id:x.id,type:x.type,amount:x.amount,date:x.date,due:x.due,note:x.note,createdAt:x.createdAt}})}}),
+      txs:c.txs.map(function(x){return {id:x.id,type:x.type,amount:x.amount,date:x.date,due:x.due,note:x.note,by:x.by||'',createdAt:x.createdAt}})}}),
     settings:{lateDays:settings.lateDays,warnDays:settings.warnDays,termDays:settings.termDays,dueMode:settings.dueMode,shop:settings.shop,country:settings.country,template:settings.template}
   };
 }
@@ -1300,7 +1318,7 @@ function fromBackup(src){
     (Array.isArray(c.txs)?c.txs:[]).forEach(function(x){
       var amt=Math.round(Number(x&&x.amount));if(!isFinite(amt)||amt<=0)return;
       var type=x.type==='payment'?'payment':'debt';
-      txs.push({id:String(x.id||uid()),d:{cid:id,type:type,amount:amt,date:validDate(x.date)?x.date:today(),due:type==='debt'?(validDate(x.due)?x.due:validDate(c.dueDate)?c.dueDate:''):'',note:String(x.note||''),createdAt:Number(x.createdAt)||Date.now()+txs.length}});
+      txs.push({id:String(x.id||uid()),d:{cid:id,type:type,amount:amt,date:validDate(x.date)?x.date:today(),due:type==='debt'?(validDate(x.due)?x.due:validDate(c.dueDate)?c.dueDate:''):'',note:String(x.note||''),by:String(x.by||''),createdAt:Number(x.createdAt)||Date.now()+txs.length}});
     });
     out.clients.push({id:id,d:{no:Number(c.no)||i+1,name:c.name,phone:String(c.phone||''),cur:c.cur==='USD'?'USD':'IQD',note:String(c.note||''),kind:c.kind==='supplier'?'supplier':'customer',del:Number(c.del)||0,createdAt:Number(c.createdAt)||Date.now()+i},txs:txs});
   });
@@ -1532,13 +1550,13 @@ function makeStatement(c){
   toast('جارٍ إنشاء كشف الحساب…');
   var rows=c.txs.map(function(x){
     var d=x.type==='debt';bal+=d?x.amount:-x.amount;
-    return {tint:d?'#ffffff':'#edf8f2',cells:[dtText(x),(d?'دين':'دفعة')+(x.note?' — '+x.note:''),d?fm(x.amount,c.cur):'',d?'':fm(x.amount,c.cur),fm(bal,c.cur)],colors:['#64788a','#13283b','#a3352b','#1d7a4b','#13283b']};
+    return {tint:d?'#ffffff':'#edf8f2',cells:[dtText(x),(d?'دين':'دفعة')+(x.note?' — '+x.note:''),d?fm(x.amount,c.cur):'',d?'':fm(x.amount,c.cur),fm(bal,c.cur),byName(x)],colors:['#64788a','#13283b','#a3352b','#1d7a4b','#13283b','#64788a']};
   });
   if(!rows.length){toast('لا توجد حركات لهذا العميل');return}
   buildReport({
     title:'كشف حساب — '+c.name,sub:showD(today())+(c.phone?'  ·  '+c.phone:''),
     stats:[['إجمالي الدين',fm(k.total,c.cur),'#a3352b'],['المستلم',fm(k.paid,c.cur),'#1d7a4b'],['المتبقي',fm(Math.max(0,k.rem),c.cur),'#9a4a14'],['الحالة',k.status==='paid'?'مسدد':k.delay===0?'لم يحل موعده':'متأخر '+k.delay+' يوم',k.status==='late'?'#a3352b':'#13283b']],
-    cols:[{w:270,h:'التاريخ والوقت',a:'r'},{w:330,h:'البيان',a:'r'},{w:170,h:'دين',a:'c'},{w:170,h:'دفعة',a:'c'},{w:180,h:'الرصيد',a:'c'}],
+    cols:[{w:250,h:'التاريخ والوقت',a:'r'},{w:270,h:'البيان',a:'r'},{w:160,h:'دين',a:'c'},{w:160,h:'دفعة',a:'c'},{w:160,h:'الرصيد',a:'c'},{w:120,h:'بواسطة',a:'r'}],
     rows:rows,total:null
   }).then(function(blob){saveFile('statement-'+c.no+'-'+today()+'.pdf',blob,'كشف الحساب')}).catch(function(){toast('تعذر إنشاء كشف الحساب')});
 }
