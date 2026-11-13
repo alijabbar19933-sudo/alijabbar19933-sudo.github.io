@@ -521,7 +521,7 @@ var DEFAULTS={lateDays:6,warnDays:1,termDays:31,dueMode:'month',shop:'ماركت
   template:'السلام عليكم {الاسم}، تذكير ودي بأن المبلغ المتبقي عليكم {المتبقي}، وموعد الاستحقاق {الاستحقاق}. نرجو التسديد في أقرب وقت. شكراً لكم.'};
 var settings=Object.assign({pinHash:'',pinSalt:''},DEFAULTS);
 var cdocs={}, tdocs={};          // id -> doc data (clients, transactions)
-var state={clients:[],trash:[]};          // derived: clients with their txs
+var state={clients:[],trash:[],delTxs:[]};          // derived: clients with their txs
 var mode='local', db=null, loaded=false, tools={downloads:null};
 var ui={tab:'customers',q:'',from:null,to:null,key:'no',dir:1,f:'all'};
 
@@ -552,12 +552,12 @@ function validDate(s){return /^\d{4}-\d{2}-\d{2}$/.test(s||'')}
 /* ---------- model ---------- */
 function normClient(d){
   if(!d||typeof d.name!=='string'||!d.name)return null;
-  return {no:Number(d.no)||0,name:d.name,phone:String(d.phone||''),cur:d.cur==='USD'?'USD':'IQD',note:String(d.note||''),kind:d.kind==='supplier'?'supplier':'customer',del:Number(d.del)||0,createdAt:Number(d.createdAt)||0};
+  return {no:Number(d.no)||0,name:d.name,phone:String(d.phone||''),cur:d.cur==='USD'?'USD':'IQD',note:String(d.note||''),kind:d.kind==='supplier'?'supplier':'customer',del:Number(d.del)||0,delBy:String(d.delBy||''),createdAt:Number(d.createdAt)||0};
 }
 function normTx(d){
   if(!d||typeof d.cid!=='string')return null;
   var a=Math.round(Number(d.amount));if(!isFinite(a)||a<=0)return null;
-  return {cid:d.cid,type:d.type==='payment'?'payment':'debt',amount:a,date:validDate(d.date)?d.date:today(),due:validDate(d.due)?d.due:'',note:String(d.note||''),by:String(d.by||''),createdAt:Number(d.createdAt)||0};
+  return {cid:d.cid,type:d.type==='payment'?'payment':'debt',amount:a,date:validDate(d.date)?d.date:today(),due:validDate(d.due)?d.due:'',note:String(d.note||''),by:String(d.by||''),del:Number(d.del)||0,delBy:String(d.delBy||''),createdAt:Number(d.createdAt)||0};
 }
 function normSettings(d){
   var o=Object.assign({pinHash:'',pinSalt:''},DEFAULTS);
@@ -573,10 +573,12 @@ function normSettings(d){
 }
 function rebuild(){
   var by={};
-  Object.keys(tdocs).forEach(function(id){var t=tdocs[id];(by[t.cid]=by[t.cid]||[]).push(Object.assign({id:id},t))});
+  var dtx=[];
+  Object.keys(tdocs).forEach(function(id){var t=tdocs[id];if(t.del){if(cdocs[t.cid]&&!cdocs[t.cid].del)dtx.push(Object.assign({id:id},t));return}(by[t.cid]=by[t.cid]||[]).push(Object.assign({id:id},t))});
+  state.delTxs=dtx.sort(function(a,b){return b.del-a.del});
   var allc=Object.keys(cdocs).map(function(id){
     var c=cdocs[id],txs=(by[id]||[]).sort(function(a,b){return a.date<b.date?-1:a.date>b.date?1:a.createdAt-b.createdAt});
-    return {id:id,no:c.no,name:c.name,phone:c.phone,cur:c.cur,note:c.note,kind:c.kind,del:c.del,createdAt:c.createdAt,txs:txs};
+    return {id:id,no:c.no,name:c.name,phone:c.phone,cur:c.cur,note:c.note,kind:c.kind,del:c.del,delBy:c.delBy||'',createdAt:c.createdAt,txs:txs};
   });
   state.clients=allc.filter(function(c){return !c.del});state.trash=allc.filter(function(c){return c.del}).sort(function(a,b){return b.del-a.del});
 }
@@ -806,7 +808,7 @@ function renderStats(){
     statCell(sp?'إجمالي المشتريات':'إجمالي الديون','debt',a.t,u.t)+statCell(sp?'إجمالي ما سددته':'إجمالي المستلم','got',a.p,u.p)+statCell(sp?'المطلوب مني':'إجمالي المتبقي','rem',a.t-a.p,u.t-u.p)+
     '<button type="button" class="stat late" data-f="late"><span>'+(sp?'متأخر سداده':'المتأخرون')+' ('+S().lateDays+' يوم فأكثر)</span><b>'+r.late+'</b></button>';
   $('#tC').textContent=state.clients.filter(function(c){return c.kind==='customer'}).length;$('#tS').textContent=state.clients.filter(function(c){return c.kind==='supplier'}).length;
-  document.querySelectorAll('#bnav [data-go]').forEach(function(b){var g=b.getAttribute('data-go');b.classList.toggle('on',g===ui.tab);if(g==='trash'){var n=state.trash.length;b.innerHTML='<i>🗑️</i>المحذوفات'+(n?' ('+n+')':'')}});
+  document.querySelectorAll('#bnav [data-go]').forEach(function(b){var g=b.getAttribute('data-go');b.classList.toggle('on',g===ui.tab);if(g==='trash'){var n=state.trash.length+state.delTxs.length;b.innerHTML='<i>🗑️</i>المحذوفات'+(n?' ('+n+')':'')}});
   var ss=$('#sortSel');if(ss)ss.value=ui.key;
   document.querySelectorAll('#tabs2 [data-tab]').forEach(function(b){var on=b.getAttribute('data-tab')===ui.tab;b.classList.toggle('on',on);b.setAttribute('aria-selected',on?'true':'false')});
   $('#shopName').textContent=S().shop;
@@ -1049,10 +1051,10 @@ function paintClient(){
   m.querySelectorAll('[data-edittx]').forEach(function(b){b.addEventListener('click',function(){cm.edit=b.getAttribute('data-edittx');paintClient();var f=cm.m.querySelector('#fTx [name=amount]');if(f)f.focus()})});
   m.querySelectorAll('[data-deltx]').forEach(function(b){b.addEventListener('click',function(){
     var tid=b.getAttribute('data-deltx'),old=tdocs[tid];
-    confirmBox('حذف هذه الحركة؟ سيتغير رصيد العميل.','حذف الحركة',true).then(function(ok){
+    confirmBox('نقل هذه الحركة إلى المحذوفات؟ سيتغير رصيد العميل، وتستطيع استرجاعها من المحذوفات.','نقل الحركة',true).then(function(ok){
       if(!ok||!old)return;
-      dropTx(tid);if(cm&&cm.edit===tid)cm.edit=null;afterChange();paintClient();
-      toast('تم حذف الحركة',{label:'تراجع',fn:function(){putTx(tid,old);afterChange()}});
+      putTx(tid,Object.assign({},old,{del:Date.now(),delBy:me()}));if(cm&&cm.edit===tid)cm.edit=null;afterChange();paintClient();
+      toast('نُقلت الحركة إلى المحذوفات',{label:'تراجع',fn:function(){putTx(tid,Object.assign({},old,{del:0,delBy:''}));afterChange()}});
     });
   })});
   m.querySelector('[data-delclient]').addEventListener('click',function(){delClient(c.id)});
@@ -1063,10 +1065,10 @@ function delClient(id){
   confirmBox('نقل <b>'+esc(c.name)+'</b> وكل حركاته إلى المحذوفات؟ تستطيع استرجاعه من هناك.','نقل إلى المحذوفات',true).then(function(ok){
     if(!ok)return;
     var cdoc=cdocs[id];
-    putClient(id,Object.assign({},cdoc,{del:Date.now()}));
+    putClient(id,Object.assign({},cdoc,{del:Date.now(),delBy:me()}));
     if(cm&&cm.id===id)closeOv(cm.ov);
     afterChange();
-    toast('نُقل إلى المحذوفات',{label:'تراجع',fn:function(){putClient(id,Object.assign({},cdoc,{del:0}));afterChange()}});
+    toast('نُقل إلى المحذوفات',{label:'تراجع',fn:function(){putClient(id,Object.assign({},cdoc,{del:0,delBy:''}));afterChange()}});
   });
 }
 
@@ -1075,12 +1077,18 @@ function openTrash(){
   var o=openModal('<div class="mhead"><h3>🗑️ المحذوفات</h3><button class="x" type="button" data-close aria-label="إغلاق">×</button></div><div id="trBody"></div><div class="foot"><button class="btn danger" type="button" id="trAll">تفريغ المحذوفات نهائياً</button><button class="btn sp" type="button" data-close>إغلاق</button></div>'),m=o.m;
   function paint(){
     var t=state.trash;
-    m.querySelector('#trAll').hidden=!t.length;
-    m.querySelector('#trBody').innerHTML=t.length?'<div class="wlist" style="max-height:55vh;overflow:auto">'+t.map(function(c){
+    var dt=state.delTxs;
+    m.querySelector('#trAll').hidden=!t.length&&!dt.length;
+    var txHtml=dt.length?'<h4 style="margin:6px 0">حركات محذوفة</h4><div class="wlist" style="max-height:30vh;overflow:auto">'+dt.map(function(x){
+      var c=getClient(x.cid),p=x.type==='payment';if(!c)return '';
+      return '<div class="wrow"><div class="n">'+esc(c.name)+'<small><span class="'+(p?'t-pay':'t-debt')+'">'+(p?'دفعة':'دين')+' '+fm(x.amount,c.cur)+'</span> · '+showD(x.date)+' · حُذفت '+showD(dstr(new Date(x.del)))+' '+timeOf({createdAt:x.del})+(x.delBy?' · بواسطة '+esc(x.delBy):'')+(x.by?' · سجّلها '+esc(x.by):'')+'</small></div>'+
+        '<button class="btn good" type="button" data-rtx="'+x.id+'">استرجاع</button><button class="btn" type="button" data-ptx="'+x.id+'">حذف نهائي</button></div>';
+    }).join('')+'</div>':'';
+    m.querySelector('#trBody').innerHTML=txHtml+(t.length&&dt.length?'<h4 style="margin:10px 0 6px">عملاء محذوفون</h4>':'')+(t.length?'<div class="wlist" style="max-height:55vh;overflow:auto">'+t.map(function(c){
       var k=calc(c);
-      return '<div class="wrow"><div class="n">'+esc(c.name)+'<small>'+(c.kind==='supplier'?'مورد':'عميل')+' · المتبقي '+fm(Math.max(0,k.rem),c.cur)+' · حُذف '+showD(dstr(new Date(c.del)))+' '+timeOf({createdAt:c.del})+'</small></div>'+
+      return '<div class="wrow"><div class="n">'+esc(c.name)+'<small>'+(c.kind==='supplier'?'مورد':'عميل')+' · المتبقي '+fm(Math.max(0,k.rem),c.cur)+' · حُذف '+showD(dstr(new Date(c.del)))+' '+timeOf({createdAt:c.del})+(c.delBy?' · بواسطة '+esc(c.delBy):'')+'</small></div>'+
         '<button class="btn good" type="button" data-rs="'+c.id+'">استرجاع</button><button class="btn" type="button" data-pm="'+c.id+'">حذف نهائي</button></div>';
-    }).join('')+'</div>':'<div class="msgbox">لا توجد محذوفات.</div>';
+    }).join('')+'</div>':(dt.length?'':'<div class="msgbox">لا توجد محذوفات.</div>'));
   }
   function purge(ids){
     ids.forEach(function(id){Object.keys(tdocs).forEach(function(tid){if(tdocs[tid].cid===id)dropTx(tid)});dropClientDoc(id)});
@@ -1088,9 +1096,12 @@ function openTrash(){
   }
   m.addEventListener('click',function(e){
     var r=e.target.closest('[data-rs]'),d=e.target.closest('[data-pm]');
-    if(r){var id=r.getAttribute('data-rs');putClient(id,Object.assign({},cdocs[id],{del:0}));afterChange();paint();toast('تم الاسترجاع');return}
+    var rt=e.target.closest('[data-rtx]'),pt=e.target.closest('[data-ptx]');
+    if(rt){var tid=rt.getAttribute('data-rtx');putTx(tid,Object.assign({},tdocs[tid],{del:0,delBy:''}));afterChange();paint();toast('تم استرجاع الحركة');return}
+    if(pt){var tid2=pt.getAttribute('data-ptx');confirmBox('حذف هذه الحركة نهائياً؟ لا يمكن التراجع.','حذف نهائي',true).then(function(ok){if(ok){dropTx(tid2);afterChange();paint()}});return}
+    if(r){var id=r.getAttribute('data-rs');putClient(id,Object.assign({},cdocs[id],{del:0,delBy:''}));afterChange();paint();toast('تم الاسترجاع');return}
     if(d){var id2=d.getAttribute('data-pm');confirmBox('حذف نهائي مع كل حركاته؟ لا يمكن التراجع.','حذف نهائي',true).then(function(ok){if(ok)purge([id2])});return}
-    if(e.target.closest('#trAll'))confirmBox('تفريغ كل المحذوفات نهائياً؟ لا يمكن التراجع.','تفريغ',true).then(function(ok){if(ok)purge(state.trash.map(function(c){return c.id}))});
+    if(e.target.closest('#trAll'))confirmBox('تفريغ كل المحذوفات نهائياً؟ لا يمكن التراجع.','تفريغ',true).then(function(ok){if(ok){state.delTxs.forEach(function(x){dropTx(x.id)});purge(state.trash.map(function(c){return c.id}))}});
   });
   paint();
 }
@@ -1303,7 +1314,7 @@ function openSettings(){
 /* ---------- backups ---------- */
 function snapshotData(){
   return {
-    clients:state.clients.concat(state.trash).map(function(c){return {id:c.id,no:c.no,name:c.name,phone:c.phone,cur:c.cur,note:c.note,kind:c.kind,del:c.del||0,createdAt:c.createdAt,
+    clients:state.clients.concat(state.trash).map(function(c){return {id:c.id,no:c.no,name:c.name,phone:c.phone,cur:c.cur,note:c.note,kind:c.kind,del:c.del||0,delBy:c.delBy||'',createdAt:c.createdAt,
       txs:c.txs.map(function(x){return {id:x.id,type:x.type,amount:x.amount,date:x.date,due:x.due,note:x.note,by:x.by||'',createdAt:x.createdAt}})}}),
     settings:{lateDays:settings.lateDays,warnDays:settings.warnDays,termDays:settings.termDays,dueMode:settings.dueMode,shop:settings.shop,country:settings.country,template:settings.template}
   };
@@ -1320,7 +1331,7 @@ function fromBackup(src){
       var type=x.type==='payment'?'payment':'debt';
       txs.push({id:String(x.id||uid()),d:{cid:id,type:type,amount:amt,date:validDate(x.date)?x.date:today(),due:type==='debt'?(validDate(x.due)?x.due:validDate(c.dueDate)?c.dueDate:''):'',note:String(x.note||''),by:String(x.by||''),createdAt:Number(x.createdAt)||Date.now()+txs.length}});
     });
-    out.clients.push({id:id,d:{no:Number(c.no)||i+1,name:c.name,phone:String(c.phone||''),cur:c.cur==='USD'?'USD':'IQD',note:String(c.note||''),kind:c.kind==='supplier'?'supplier':'customer',del:Number(c.del)||0,createdAt:Number(c.createdAt)||Date.now()+i},txs:txs});
+    out.clients.push({id:id,d:{no:Number(c.no)||i+1,name:c.name,phone:String(c.phone||''),cur:c.cur==='USD'?'USD':'IQD',note:String(c.note||''),kind:c.kind==='supplier'?'supplier':'customer',del:Number(c.del)||0,delBy:String(c.delBy||''),createdAt:Number(c.createdAt)||Date.now()+i},txs:txs});
   });
   return out;
 }
@@ -1427,9 +1438,9 @@ function clearZero(){
   confirmBox('نقل <b>'+z.length+'</b> من أصحاب الرصيد صفر إلى المحذوفات؟ تستطيع استرجاعهم من هناك.','نقل '+z.length,true).then(function(ok){
     if(!ok)return;
     var now=Date.now(),saved=z.map(function(c){return {id:c.id,d:cdocs[c.id]}});
-    saved.forEach(function(x){putClient(x.id,Object.assign({},x.d,{del:now}))});
+    saved.forEach(function(x){putClient(x.id,Object.assign({},x.d,{del:now,delBy:me()}))});
     afterChange();
-    toast('نُقل '+z.length+' إلى المحذوفات',{label:'تراجع',fn:function(){saved.forEach(function(x){putClient(x.id,Object.assign({},x.d,{del:0}))});afterChange()}});
+    toast('نُقل '+z.length+' إلى المحذوفات',{label:'تراجع',fn:function(){saved.forEach(function(x){putClient(x.id,Object.assign({},x.d,{del:0,delBy:''}))});afterChange()}});
   });
 }
 function loadSample(){
