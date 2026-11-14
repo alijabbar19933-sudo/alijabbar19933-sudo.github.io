@@ -10,6 +10,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="icon-192.png" type="image/png" sizes="192x192">
 <style>[hidden]{display:none!important}html,body{margin:0}body{background:var(--bg)}</style>
+<!-- v2 2026-11-14 -->
 <title>نظام الديون</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -346,6 +347,7 @@ body.hide-amt .stat b,body.hide-amt .stat em,body.hide-amt .tbl td.num,body.hide
         <hr>
         <button type="button" role="menuitem" id="bZero">حذف الرصيد صفر</button>
         <button type="button" role="menuitem" id="bSet">الإعدادات</button>
+        <button type="button" role="menuitem" id="bOut" style="display:none">تسجيل الخروج</button>
       </div>
     </header>
     <section class="body">
@@ -476,7 +478,8 @@ body.hide-amt .stat b,body.hide-amt .stat em,body.hide-amt .tbl td.num,body.hide
     });
   }};
 
-  window.claude={use:function(n){
+  var doOut=function(){location.reload()};
+  window.claude={signOut:function(){return doOut()},use:function(n){
     if(n==='downloads')return Promise.resolve(downloads);
     if(n==='db')return dbPromise;
     return Promise.resolve(null);
@@ -503,10 +506,22 @@ body.hide-amt .stat b,body.hide-amt .stat em,body.hide-amt .tbl td.num,body.hide
       };
       document.getElementById('fbReset').onclick=function(){try{localStorage.removeItem('fb-config')}catch(e){}location.reload()};
     }
+    doOut=function(){
+      panel('<p>جارٍ تسجيل الخروج…</p>');
+      var fin=function(){
+        try{localStorage.clear()}catch(e){}try{sessionStorage.clear()}catch(e){}
+        try{if(window.caches)caches.keys().then(function(k){k.forEach(function(x){caches.delete(x)})})}catch(e){}
+        setTimeout(function(){location.reload()},150);
+      };
+      return Promise.resolve().then(function(){return auth.signOut()}).catch(function(){})
+        .then(function(){return fs.terminate()}).catch(function(){})
+        .then(function(){return fs.clearPersistence()}).catch(function(){})
+        .then(fin,fin);
+    };
     var done=false;
     auth.onAuthStateChanged(function(u){
       if(u){var nm=String(u.displayName||'').trim().split(/\s+/)[0]||String(u.email||'').split('@')[0]||'';window.claude.user={name:nm,email:u.email||''};if(!done){done=true;hidePanel();resolveDb(wrapDb(fs))}}
-      else if(!done){signin('')}
+      else if(!done){signin('')}else{location.reload()}
     });
   })
   .catch(function(e){try{console.error('fb',e&&e.message)}catch(x){}panel('<p>تعذر تحميل خدمة Firebase. تحقق من الإنترنت ثم أعد فتح الصفحة.</p><button style="'+btn+'" onclick="location.reload()">إعادة المحاولة</button>')});
@@ -656,7 +671,8 @@ function writeDoc(path,del,data){
   }).then(function(){pending--;if(!pending){setSync('saved')}});
 }
 function putClient(id,d){return writeDoc('clients/'+id,false,d)}
-function me(){var u=window.claude&&window.claude.user;return u&&u.name?String(u.name):''}
+var curUser='';
+function me(){var u=window.claude&&window.claude.user;return curUser||(u&&u.name?String(u.name):'')}
 function byName(x){return x&&x.by?x.by:''}
 function putTx(id,d){if(d.by===undefined)d.by=me();return writeDoc('txs/'+id,false,d)}
 function dropTx(id){return writeDoc('txs/'+id,true)}
@@ -714,6 +730,7 @@ function boot(){
   renderAll();
   var c=window.claude;
   if(!c||typeof c.use!=='function'){startLocal();return}
+  try{Promise.resolve(c.use('user')).then(function(u){return u&&u.me?u.me():null}).then(function(m){if(m&&m.name)curUser=String(m.name).trim().split(/\s+/)[0]}).catch(function(){})}catch(e){}
   Promise.all([c.use('db'),c.use('downloads')]).then(function(r){
     tools.downloads=r[1]||null;db=r[0];
     if(!db){startLocal();return}
@@ -1248,6 +1265,11 @@ function openWa(){
 }
 
 /* ---------- settings ---------- */
+function canSignOut(){return !!(window.claude&&typeof window.claude.signOut==='function')}
+function doSignOut(){
+  if(!canSignOut())return;
+  confirmBox('تسجيل الخروج من الحساب؟ ستُمسح بيانات التطبيق من هذا الجهاز، وتبقى محفوظة على السيرفر وتظهر عند الدخول من جديد.','تسجيل الخروج',true).then(function(ok){if(ok)window.claude.signOut()});
+}
 function openSettings(){
   var s=S();
   var o=openModal('<div class="mhead"><h3>الإعدادات</h3><button class="x" type="button" data-close aria-label="إغلاق">×</button></div>'+
@@ -1270,7 +1292,9 @@ function openSettings(){
     '<div class="err" id="ePin" role="alert"></div>'+
     '<div class="foot"><button class="btn solid" type="submit">'+(pinSet()?'تغيير الرمز':'تفعيل القفل')+'</button>'+(pinSet()?'<button class="btn danger" type="button" id="pOff">إزالة القفل</button>':'')+'</div></form>'+
     (mode==='db'?'<div class="sec"><h4>النسخ التلقائية (آخر 7 أيام)</h4><div id="autoList" class="msgbox">جارٍ التحميل…</div></div>':'')+
+    (canSignOut()?'<div class="sec"><h4>الحساب</h4><div style="font-size:12.5px;color:var(--muted)">'+(me()?'مسجّل الدخول باسم: '+esc(me())+'. ':'')+'عند تسجيل الخروج تُمسح بيانات التطبيق من هذا الجهاز، وتبقى محفوظة على السيرفر.</div><div><button class="btn danger" type="button" id="sOut">تسجيل الخروج</button></div></div>':'')+
     '<div class="foot"><button class="btn sp" type="button" data-close>إغلاق</button></div>');
+  var sOut=o.m.querySelector('#sOut');if(sOut)sOut.addEventListener('click',function(){closeOv(o.ov);doSignOut()});
   var f=o.m.querySelector('#fSet');
   o.m.querySelector('#sDef').addEventListener('click',function(){
     settings=Object.assign({},DEFAULTS,{pinHash:settings.pinHash,pinSalt:settings.pinSalt});putSettings();afterChange();closeOv(o.ov);toast('تم استرجاع الإعدادات الافتراضية');
@@ -1720,6 +1744,8 @@ $('#bBackup').addEventListener('click',backup);
 $('#bRestore').addEventListener('click',function(){$('#restoreFile').click()});
 $('#restoreFile').addEventListener('change',function(e){var f=e.target.files&&e.target.files[0];if(f)restoreFrom(f);e.target.value=''});
 $('#bZero').addEventListener('click',clearZero);
+$('#bOut').addEventListener('click',doSignOut);
+if(canSignOut())$('#bOut').style.display='';
 $('#bSet').addEventListener('click',openSettings);
 $('#fq').addEventListener('input',function(e){ui.q=e.target.value;renderTable()});
 function numOrNull(v){var n=parseInt(v,10);return isFinite(n)?n:null}
