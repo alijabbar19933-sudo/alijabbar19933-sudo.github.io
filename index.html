@@ -60,6 +60,9 @@ button{cursor:pointer}
 
 /* masthead */
 .hero{background:linear-gradient(120deg,var(--hero1),var(--hero2));color:var(--hero-ink);padding:22px 28px;display:flex;flex-wrap:wrap;align-items:center;gap:16px 24px}
+.hero{position:relative}
+.themeBtn{position:absolute;top:12px;left:12px;width:34px;height:34px;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.12);color:var(--hero-ink);font-size:16px;line-height:1;display:grid;place-items:center;z-index:2}
+.themeBtn:hover{background:rgba(255,255,255,.22)}
 .brand{display:flex;align-items:center;gap:14px;min-width:0}
 .brand svg{flex:none;width:56px;height:56px}
 .brand h1{margin:0;font-size:28px;font-weight:800;line-height:1.2}
@@ -315,6 +318,7 @@ body.hide-amt .stat b,body.hide-amt .stat em,body.hide-amt .tbl td.num,body.hide
 <div class="app" id="app" lang="ar">
   <div class="card">
     <header class="hero">
+      <button class="themeBtn" id="bTheme" type="button" aria-label="تبديل الوضع الليلي والنهاري"></button>
       <div class="brand">
         <svg viewBox="0 0 64 64" role="img" aria-label="دينار عراقي">
           <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6d46b"/><stop offset="1" stop-color="#c58a14"/></linearGradient></defs>
@@ -1760,6 +1764,18 @@ $('#bRestore').addEventListener('click',function(){$('#restoreFile').click()});
 $('#restoreFile').addEventListener('change',function(e){var f=e.target.files&&e.target.files[0];if(f)restoreFrom(f);e.target.value=''});
 $('#bZero').addEventListener('click',clearZero);
 $('#bOut').addEventListener('click',doSignOut);
+(function(){
+  var btn=$('#bTheme'),root=document.documentElement;
+  function eff(){var t=root.getAttribute('data-theme');if(t==='dark'||t==='light')return t;return (window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light'}
+  function paint(){var d=eff()==='dark';btn.textContent=d?'☀️':'🌙';btn.title=d?'الوضع النهاري':'الوضع الليلي';btn.setAttribute('aria-pressed',d?'true':'false')}
+  var saved='';try{saved=localStorage.getItem('ledger-theme')||''}catch(e){}
+  if(saved==='dark'||saved==='light')root.setAttribute('data-theme',saved);
+  paint();
+  btn.addEventListener('click',function(){
+    var n=eff()==='dark'?'light':'dark';root.setAttribute('data-theme',n);
+    try{localStorage.setItem('ledger-theme',n)}catch(e){}paint();
+  });
+})();
 if(canSignOut())$('#bOut').style.display='';
 $('#bSet').addEventListener('click',openSettings);
 $('#fq').addEventListener('input',function(e){ui.q=e.target.value;renderTable()});
