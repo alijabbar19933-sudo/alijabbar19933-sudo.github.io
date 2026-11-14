@@ -250,7 +250,7 @@ details.edit[open] summary{margin-bottom:6px}
   .c-note{width:auto}
   .tbl td.c-act{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}
   .c-act .mini{width:auto;flex:1;margin:0;padding:8px 0}
-  .c-act .mini.pay{flex:1 1 100%}
+  .c-act .mini,.c-act .mini.pay,.c-act .mini.debt{flex:1 1 calc(50% - 4px);min-width:0}
   .tbl td.empty-cell{grid-column:1/-1}
   .tbl td.empty-cell::before{display:none !important}
 }
@@ -867,7 +867,7 @@ function renderTable(){
       '<td class="cen" data-label="المتبقي"><span class="chip '+(k.rem>0?'chip-rem':'chip-ok')+'">'+fm(Math.max(0,k.rem),c.cur)+'</span></td>'+
       '<td class="cen" data-label="مدة التأخير"><span class="pill p-'+k.status+'">'+delayText(k)+'</span>'+(k.due?'<small class="due">الاستحقاق '+showD(k.due)+'</small>':'')+'</td>'+
       '<td class="c-note" data-label="الملاحظات"><textarea data-note rows="2" placeholder="ملاحظات..." aria-label="ملاحظات '+esc(c.name)+'">'+esc(c.note)+'</textarea></td>'+
-      '<td class="c-act"><button class="mini pay" type="button" data-act="pay"'+(k.rem>0?'':' disabled')+'>'+(isSup()?'+ سددت':'استلام دفعة/تسديد')+'</button><button class="mini debt" type="button" data-act="debt">'+(isSup()?'+ مشتريات':'+ دين')+'</button><button class="mini" type="button" data-act="view">السجل</button><button class="mini del" type="button" data-act="del">حذف</button></td>'+
+      '<td class="c-act"><button class="mini debt" type="button" data-act="debt">'+(isSup()?'+ مشتريات':'+ دين')+'</button><button class="mini pay" type="button" data-act="pay"'+(k.rem>0?'':' disabled')+'>'+(isSup()?'+ سددت':'استلام دفعة/تسديد')+'</button><button class="mini" type="button" data-act="view">السجل</button><button class="mini del" type="button" data-act="del">حذف</button></td>'+
     '</tr>';
   }).join('');
 }
