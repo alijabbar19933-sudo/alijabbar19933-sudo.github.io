@@ -68,6 +68,12 @@ button{cursor:pointer}
 #saveAlert button{background:#fff;color:#b3261e;border:0;border-radius:9px;padding:7px 18px;font-weight:700;font-size:14px}
 #pendAlert{position:fixed;top:10px;inset-inline:12px;z-index:9998;max-width:560px;margin-inline:auto;background:#8a5a00;color:#fff;border-radius:12px;padding:10px 14px;box-shadow:0 10px 28px rgba(0,0,0,.4);font-size:14px;line-height:1.6}
 #saveAlert[hidden],#pendAlert[hidden]{display:none!important}
+.nsb{display:block;position:relative;background:#b3261e;color:#fff;border-radius:10px;padding:6px 10px;margin:0 0 9px;font-size:12.5px;line-height:1.7;font-weight:600;font-family:inherit;white-space:normal;text-align:right}
+.nsb:after{content:"";position:absolute;bottom:-6px;inset-inline-start:18px;border:6px solid transparent;border-bottom:0;border-top-color:#b3261e}
+.nsb.slow{background:#8a5a00}.nsb.slow:after{border-top-color:#8a5a00}
+.nsb button{all:unset;cursor:pointer;background:#fff;color:#b3261e;border-radius:999px;padding:1px 10px;margin-inline-start:6px;font-weight:700;font-size:12px}
+.nsb.slow button{color:#8a5a00}
+.nsrow>td{padding:6px 8px 0!important;border:0!important}
 .themeBtn{position:absolute;top:12px;left:12px;width:34px;height:34px;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.12);color:var(--hero-ink);font-size:16px;line-height:1;display:grid;place-items:center;z-index:2}
 .themeBtn:hover{background:rgba(255,255,255,.22)}
 .brand{display:flex;align-items:center;gap:14px;min-width:0}
@@ -423,8 +429,6 @@ body.hide-amt .stat b,body.hide-amt .stat em,body.hide-amt .tbl td.num,body.hide
     <small>نسيت الرمز؟ اطلب من Claude في المحادثة إزالة القفل.</small>
   </div>
 </div>
-<div id="saveAlert" role="alert" aria-live="assertive" hidden></div>
-<div id="pendAlert" role="status" aria-live="polite" hidden></div>
 <div id="layer"></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <input type="file" id="restoreFile" accept=".json,application/json" hidden>
@@ -675,7 +679,7 @@ function applyOne(path,o){
   if(o.del)delete map[p[1]];else map[p[1]]=o.data;
 }
 function applyOverlay(){Object.keys(overlay).forEach(function(p){applyOne(p,overlay[p])})}
-var failed=[],pendT=null;
+var failed=[];
 function describeWrite(path,del,data){
   var q=path.split('/'),d=data||{};
   if(q[0]==='clients'){
@@ -689,24 +693,36 @@ function describeWrite(path,del,data){
   }
   return 'تعديل البيانات';
 }
-function showFail(what,why){
-  if(!what)return;
-  failed.push(what);
-  var el=$('#saveAlert');if(!el)return;
-  var items=failed.slice(-6);
-  el.innerHTML='<b>⚠️ لم يتم حفظ التالي!</b><ul>'+items.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+'</ul><div class="why">'+esc(why||'')+'<br>أعد إدخالها بعد حل السبب، وتأكد أنها ظهرت في القائمة.</div><button type="button" id="saveAlertOk">حسناً</button>';
-  el.hidden=false;
-  $('#saveAlertOk').addEventListener('click',function(){failed=[];el.hidden=true});
-}
+function showFail(){}
+var pendT=null;
 function pendCheck(){
-  var el=$('#pendAlert');if(!el)return;
   if(pending>0){
-    if(!pendT)pendT=setTimeout(function(){pendT=null;if(pending>0){el.textContent='⏳ لم يتأكد حفظ '+pending+' عملية بعد. تأكد من الإنترنت ولا تغلق التطبيق. ستُحفظ تلقائياً عند عودة الاتصال.';el.hidden=false}},5000);
-  }else{
-    if(pendT){clearTimeout(pendT);pendT=null}
-    el.hidden=true;
-  }
+    if(!pendT)pendT=setTimeout(function(){pendT=null;if(pending>0&&typeof renderAll==='function'){renderAll();if(cm)paintClient()}},5200);
+  }else if(pendT){clearTimeout(pendT);pendT=null}
 }
+/* bubble shown above the item that is not saved yet */
+function nsOf(path){var o=overlay[path];if(!o||o.del||mode!=='db')return null;if(o.state==='failed')return 'bad';if(Date.now()-o.t>5000)return 'slow';return null}
+function nsBadge(path){
+  var k=nsOf(path);if(!k)return '';var o=overlay[path];
+  var what=describeWrite(path,false,o.data);
+  return '<div class="nsb '+(k==='bad'?'bad':'slow')+'" role="alert">'+(k==='bad'?'⚠️ لم يُحفظ: '+esc(what)+' — '+esc(o.why||'تعذر الحفظ')+'<button type="button" data-nsretry="'+path+'">إعادة المحاولة</button><button type="button" data-nsdrop="'+path+'">إلغاء</button>':'⏳ لم يتأكد حفظ: '+esc(what)+' — تأكد من الإنترنت ولا تغلق التطبيق')+'</div>';
+}
+function nsClient(c){
+  var h=nsBadge('clients/'+c.id);
+  Object.keys(overlay).forEach(function(p){var o=overlay[p];if(p.indexOf('txs/')===0&&o.data&&o.data.cid===c.id)h+=nsBadge(p)});
+  return h;
+}
+document.addEventListener('click',function(e){
+  var t=e.target.closest&&e.target.closest('[data-nsretry],[data-nsdrop]');if(!t)return;
+  var rt=t.getAttribute('data-nsretry'),path=rt||t.getAttribute('data-nsdrop'),o=overlay[path];if(!o)return;
+  e.preventDefault();e.stopPropagation();
+  if(rt){delete overlay[path];writeDoc(path,o.del,o.data,o.prev)}
+  else{
+    delete overlay[path];var q=path.split('/'),map=q[0]==='clients'?cdocs:tdocs;
+    if(o.prev)map[q[1]]=o.prev;else delete map[q[1]];
+  }
+  afterChange();if(cm)paintClient();
+},true);
 function writeError(e,what){
   var code=String(e&&e.code||'').replace('firestore/','');
   var msg=code==='invalid_argument'?'ليس لديك صلاحية التعديل على هذه البيانات'
@@ -717,11 +733,12 @@ function writeError(e,what){
     :code==='unavailable'||code==='deadline-exceeded'?'لا يوجد اتصال بالسيرفر. سيُحفظ التغيير عند عودة الإنترنت'
     :'تعذر حفظ التغييرات، حاول مرة أخرى'+(code?' ('+code+')':'');
   try{console.error('write failed',e)}catch(x){}
-  toast(msg);showFail(what,msg);
+  toast(msg);return msg;
 }
 /* write one document; the change shows at once and is kept until the store confirms it */
-function writeDoc(path,del,data){
-  var token={del:del,data:data};
+function writeDoc(path,del,data,prevDoc){
+  var qq=path.split('/'),pm=qq[0]==='clients'?cdocs:qq[0]==='txs'?tdocs:{};
+  var token={del:del,data:data,t:Date.now(),prev:prevDoc!==undefined?prevDoc:pm[qq[1]],state:'pending'};
   overlay[path]=token;applyOne(path,token);
   if(mode!=='db'){delete overlay[path];saveLocal();return Promise.resolve()}
   pending++;setSync('saving');pendCheck();
@@ -731,8 +748,10 @@ function writeDoc(path,del,data){
   return next.then(function(){
     if(overlay[path]===token)delete overlay[path];
   },function(e){
-    if(overlay[path]===token)delete overlay[path];
-    setSync('error');writeError(e,describeWrite(path,del,data));
+    var why=writeError(e,describeWrite(path,del,data));
+    if(overlay[path]===token){if(del)delete overlay[path];else{token.state='failed';token.why=why}}
+    setSync('error');
+    try{renderAll();if(cm)paintClient()}catch(x){}
   }).then(function(){pending--;if(!pending){setSync('saved')}pendCheck()});
 }
 function putClient(id,d){return writeDoc('clients/'+id,false,d)}
@@ -926,7 +945,7 @@ function renderTable(){
     var c=r.c,k=r.k;
     return '<tr class="r-'+k.status+'" data-id="'+c.id+'">'+
       '<td class="c-no"><span class="no">'+c.no+'</span></td>'+
-      '<td class="c-name" data-label="'+(isSup()?'اسم المورد':'اسم العميل')+'"><button class="namebtn" type="button" data-act="view">'+esc(c.name)+'</button>'+(c.phone?'<small>'+esc(c.phone)+'</small>'+qIcons(c):'')+'</td>'+
+      '<td class="c-name" data-label="'+(isSup()?'اسم المورد':'اسم العميل')+'">'+nsClient(c)+'<button class="namebtn" type="button" data-act="view">'+esc(c.name)+'</button>'+(c.phone?'<small>'+esc(c.phone)+'</small>'+qIcons(c):'')+'</td>'+
       '<td class="num debt" data-label="إجمالي الدين">'+fm(k.ct,c.cur)+'</td>'+
       '<td class="num got" data-label="المبلغ المستلم">'+fm(k.cp,c.cur)+'</td>'+
       '<td class="cen" data-label="المتبقي"><span class="chip '+(k.rem>0?'chip-rem':'chip-ok')+'">'+fm(Math.max(0,k.rem),c.cur)+'</span></td>'+
@@ -1094,7 +1113,7 @@ function paintClient(){
   var isDebt=ed?ed.type==='debt':false;
   var m=cm.m;
   m.innerHTML=
-    '<div class="mhead"><div><h3>'+esc(c.name)+'</h3>'+(c.phone?'<small>'+esc(c.phone)+'</small>':'')+'</div><button class="x" type="button" data-close aria-label="إغلاق">×</button></div>'+
+    '<div class="mhead"><div>'+nsBadge('clients/'+c.id)+'<h3>'+esc(c.name)+'</h3>'+(c.phone?'<small>'+esc(c.phone)+'</small>':'')+'</div><button class="x" type="button" data-close aria-label="إغلاق">×</button></div>'+
     '<div class="mini-stats"><div><span>إجمالي الدين</span><b class="t-debt">'+fm(k.ct,c.cur)+'</b></div><div><span>المستلم</span><b class="t-pay">'+fm(k.cp,c.cur)+'</b></div><div><span>المتبقي</span><b style="color:var(--rem)">'+fm(Math.max(0,k.rem),c.cur)+'</b></div></div>'+
     '<div><span class="pill p-'+k.status+'">'+(k.status==='paid'?'مسدد بالكامل':k.delay===0?'لم يحل موعد الاستحقاق':'متأخر '+k.delay+' يوم')+'</span>'+(k.due?' <small class="due" style="display:inline">أقرب استحقاق '+showD(k.due)+'</small>':'')+'</div>'+
     '<form id="fTx" class="sec" novalidate><h4>'+(ed?'تعديل حركة':'تسجيل حركة')+'</h4>'+
@@ -1107,7 +1126,7 @@ function paintClient(){
       '<div class="foot"><button class="btn solid" type="submit">'+(ed?'حفظ التعديل':'حفظ الحركة')+'</button>'+(ed?'<button class="btn" type="button" data-canceledit>إلغاء التعديل</button>':'')+'</div></form>'+
     '<div class="sec"><h4>سجل الحركات ('+txs.length+')</h4>'+
       (txs.length?'<div class="mtbl-wrap"><table class="mtbl"><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>الاستحقاق</th><th>بواسطة</th><th>ملاحظة</th><th></th></tr></thead><tbody>'+
-        txs.map(function(x){var p=x.type==='payment';return '<tr><td>'+dtCell(x)+'</td><td class="'+(p?'t-pay':'t-debt')+'">'+(p?'دفعة':'دين')+'</td><td class="m '+(p?'t-pay':'t-debt')+'">'+fm(x.amount,c.cur)+'</td><td>'+(p?'—':showD(x.due||addDays(x.date,S().termDays)))+'</td><td>'+esc(byName(x)||'—')+'</td><td>'+esc(x.note)+'</td><td style="white-space:nowrap"><button class="btn" type="button" data-edittx="'+x.id+'" style="padding:2px 10px">تعديل</button> <button class="btn danger" type="button" data-deltx="'+x.id+'" style="padding:2px 10px">حذف</button></td></tr>'}).join('')+
+        txs.map(function(x){var p=x.type==='payment',nb=nsBadge('txs/'+x.id);return (nb?'<tr class="nsrow"><td colspan="7">'+nb+'</td></tr>':'')+'<tr><td>'+dtCell(x)+'</td><td class="'+(p?'t-pay':'t-debt')+'">'+(p?'دفعة':'دين')+'</td><td class="m '+(p?'t-pay':'t-debt')+'">'+fm(x.amount,c.cur)+'</td><td>'+(p?'—':showD(x.due||addDays(x.date,S().termDays)))+'</td><td>'+esc(byName(x)||'—')+'</td><td>'+esc(x.note)+'</td><td style="white-space:nowrap"><button class="btn" type="button" data-edittx="'+x.id+'" style="padding:2px 10px">تعديل</button> <button class="btn danger" type="button" data-deltx="'+x.id+'" style="padding:2px 10px">حذف</button></td></tr>'}).join('')+
       '</tbody></table></div>':'<div class="msgbox">لا توجد حركات مسجلة لهذا العميل.</div>')+
     '</div>'+
     '<details class="edit"><summary>تعديل بيانات العميل</summary><form id="fEdit" class="sec" novalidate>'+
@@ -1283,7 +1302,7 @@ function openTxs(){
     function line(i){return money(sm.IQD[i])+(sm.USD[i]?' + $'+money(sm.USD[i]):'')}
     o.m.querySelector('#txBody').innerHTML=list.length?
       '<div class="mtbl-wrap"><table class="mtbl"><thead><tr><th>التاريخ</th><th>العميل</th><th>النوع</th><th>المبلغ</th><th>بواسطة</th><th>ملاحظة</th></tr></thead><tbody>'+
-      list.map(function(r){var p=r.x.type==='payment';return '<tr><td>'+dtCell(r.x)+'</td><td>'+esc(r.c.name)+'</td><td class="'+(p?'t-pay':'t-debt')+'">'+(p?'دفعة':'دين')+'</td><td class="m '+(p?'t-pay':'t-debt')+'">'+fm(r.x.amount,r.c.cur)+'</td><td>'+esc(byName(r.x)||'—')+'</td><td>'+esc(r.x.note)+'</td></tr>'}).join('')+
+      list.map(function(r){var p=r.x.type==='payment',nb=nsBadge('txs/'+r.x.id);return (nb?'<tr class="nsrow"><td colspan="6">'+nb+'</td></tr>':'')+'<tr><td>'+dtCell(r.x)+'</td><td>'+esc(r.c.name)+'</td><td class="'+(p?'t-pay':'t-debt')+'">'+(p?'دفعة':'دين')+'</td><td class="m '+(p?'t-pay':'t-debt')+'">'+fm(r.x.amount,r.c.cur)+'</td><td>'+esc(byName(r.x)||'—')+'</td><td>'+esc(r.x.note)+'</td></tr>'}).join('')+
       '</tbody></table></div><div class="msgbox" style="margin-top:10px">'+list.length+' حركة · دفعات '+line(0)+' · ديون '+line(1)+'</div>':
       '<div class="msgbox">لا توجد حركات مطابقة.</div>';
   }
